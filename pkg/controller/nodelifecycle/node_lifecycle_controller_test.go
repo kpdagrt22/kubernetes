@@ -2479,6 +2479,42 @@ func TestMonitorNodeHealthMarkPodsNotReadyRetry(t *testing.T) {
 			},
 			expectedPodStatusUpdates: 1,
 		},
+		// Node is NotReady with a fresh heartbeat, then goes stale and flips to Unknown.
+		// The first pod list after the flip fails, so the retry must be queued.
+		// The next monitorNodeHealth check marks pods NotReady (retry).
+		{
+			desc: "unsuccessful pod list on False to Unknown transition, retry required",
+			fakeNodeHandler: &testutil.FakeNodeHandler{
+				Clientset: fake.NewSimpleClientset(&v1.PodList{Items: []v1.Pod{*testutil.NewPod("pod0", "node0")}}),
+			},
+			fakeGetPodsAssignedToNode: func(c *fake.Clientset) func(string) ([]*v1.Pod, error) {
+				i := 0
+				f := fakeGetPodsAssignedToNode(c)
+				return func(nodeName string) ([]*v1.Pod, error) {
+					i++
+					// Call 1 is the fresh False node; call 2 is the False -> Unknown pass.
+					if i == 2 {
+						return nil, fmt.Errorf("fake error")
+					}
+					return f(nodeName)
+				}
+			},
+			nodeIterations: []nodeIteration{
+				{
+					timeToPass: 0,
+					newNodes:   makeNodes(v1.ConditionFalse, timeNow, timeNow),
+				},
+				{
+					timeToPass: 1 * time.Minute,
+					newNodes:   makeNodes(v1.ConditionFalse, timeNow, timeNow),
+				},
+				{
+					timeToPass: 1 * time.Minute,
+					newNodes:   makeNodes(v1.ConditionFalse, timeNow, timeNow),
+				},
+			},
+			expectedPodStatusUpdates: 1,
+		},
 	}
 
 	for _, item := range table {
